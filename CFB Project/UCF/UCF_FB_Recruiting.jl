@@ -7,20 +7,18 @@ using DataFrames
 using DecisionTree
 using Distributions
 using Distances
-using Econometrics
-using EvoTrees 
+using Econometrics 
 using Gadfly
 using GLM
 using HypothesisTests
 using Statistics
-using Stella
 
 popdisplay()
 Gadfly.pop_theme()
 Gadfly.push_theme(:dark)
 
 #Data
-file = "C:\\Users\\Dustin\\Documents\\GitHub\\Datasets\\CFB\\recruits.csv"
+file = "C:\\Users\\dusti\\Documents\\github\\Datasets\\CFB\\recruits.csv"
 recruits = DataFrame(CSV.File(file, dateformat="yyyy/mm/dd"))
 
 #SOME BASIC PLOTTING
@@ -39,7 +37,7 @@ plot_wdist = Gadfly.plot(recruits, x=:Weight, color=:Staff, Geom.density,
 
 #Plot (Mean Height & Weight By Position & Staff)
 recruitsGroupedPS = groupby(recruits, [:Pos,:Staff])
-recruitsHW_means = combine([:Height, :Weight] => (h, w) -> (Height_mean=mean(h), Weight_mean=mean(w)), recruitsGroupedPS)
+recruitsHW_means = combine(recruitsGroupedPS, [:Height, :Weight] .=> mean)
 
 set_default_plot_size(45cm,12cm)
 plot_pos_by_staff = Gadfly.plot(recruitsHW_means, xgroup="Pos", x="Weight_mean", y="Height_mean", color=:Staff,Geom.subplot_grid(Geom.point))
@@ -99,16 +97,80 @@ entropy(recruits."RivalsRating")
 entropy(recruits."RivalsStars")
 entropy(recruits."ESPNStars")
 
-#Distribution Fitting
-#Check if Normal
-fit(Normal, recruits.Height)
-fit(Normal, recruits.Weight)  
-fit(Normal, recruits."Rating")
-fit(Normal, recruits."Stars")
-fit(Normal, recruits."RivalsRating")
-fit(Normal, recruits."RivalsStars")
-fit(Normal, recruits."ESPNRating")
-fit(Normal, recruits."ESPNStars")
+#One-way Anova by Staff
+scoresOleary = AbstractVector{Real}(recruits[recruits[!,:Staff] .== "Oleary",:].Rating)
+scoresFrost = AbstractVector{Real}(recruits[recruits[!,:Staff] .== "Frost",:].Rating)
+scoresHuepel = AbstractVector{Real}(recruits[recruits[!,:Staff] .== "Huepel",:].Rating)
+scoresMalzahn = AbstractVector{Real}(recruits[recruits[!,:Staff] .== "Malzahn",:].Rating)
+OneWayANOVATest(scoresOleary, scoresFrost, scoresHuepel, scoresMalzahn)
+#Note: In general, one-way anova is only robust against violations of equal variance assumption when 
+#       sample size is equivilent across levels. Thus more analysis must be done to determine if
+#       unequal variances exist between levels. In the event they do we must look to the non-parametric 
+#       Kruskal-Wallis Test of differences between means between the 4 groups.
+
+#Test for variance equivilence
+LeveneTest(scoresOleary, scoresFrost, scoresHuepel, scoresMalzahn)
+BrownForsytheTest(scoresOleary, scoresFrost, scoresHuepel, scoresMalzahn)
+#Note: We can see from the output generated that the use of distibution mean as the paramter of differientiation
+#       infers that the variance of each rating distribution is not equal. However, when the median parameter is used 
+#       we fail to infer this alternative hypothesis. The optimal choice in equal variance testing depends on the underlying 
+#       distribution but it is general practice that the Brown-Forsythe Test is recommended since it is the more robust
+#       choice and maintains the higher degree of statistical power.
+
+#Test for variance equivilence (cont.)
+UnequalVarianceTTest(scoresOleary, scoresFrost)
+UnequalVarianceTTest(scoresOleary, scoresHuepel)
+UnequalVarianceTTest(scoresOleary, scoresMalzahn)
+
+UnequalVarianceTTest(scoresFrost, scoresHuepel)
+UnequalVarianceTTest(scoresFrost, scoresMalzahn)
+
+UnequalVarianceTTest(scoresHuepel, scoresMalzahn)
+#Note: For groups with differing sample sizes, another test of interest is Welch's t-test, an adaption of the Student's t-test 
+#       that is more reeliable in the presence of unequal variances. This test assumes however, that the underlying sample disributions
+#       are normal. From the testing, we infer that the variance among the samples are unequal.
+#       
+#       Conclusion: Levene's Test > Brown-Forsythe Test
+#
+#       - Variance among Oleary & Frost recruits can be assumed to be equal, while Hupuel & Malzahn recruits reject this null assumption.
+#       - Oddly, Huepel variance is assumed to be equal to Frost variance given the above
+#                       
+
+#Kolmogorov–Smirnov Test of Normality
+#Single Sample
+ApproximateOneSampleKSTest(unique(recruits.Rating), Normal())
+
+#Two Sample
+ApproximateTwoSampleKSTest(scoresOleary, scoresFrost)
+ApproximateTwoSampleKSTest(scoresOleary, scoresHuepel)
+ApproximateTwoSampleKSTest(scoresOleary, scoresMalzahn)
+
+ApproximateTwoSampleKSTest(scoresFrost, scoresHuepel)
+ApproximateTwoSampleKSTest(scoresFrost, scoresMalzahn)
+
+ApproximateTwoSampleKSTest(scoresHuepel, scoresMalzahn)
+#Note: Single sample, commonly called the goodness of fit test, infers if the distribution differes substantially from the theoretical expectations of a Gaussian distribution.
+#       Two sample, compares two groups against eachother to determine if the samples were taken from the same underlying population with the same disribution. If the p-value is   
+#       small we conclude that the samples are from distinct populations that may differ in median, shape or variance.
+#
+#       - Reject null that the rating values come from a normal disribution. Subsets for each coach also are not normal.
+#
+#       - Frost recruits show no statistical deviation from Oleary recruits
+#       - Huepel & Malzahn recruits come from a distinct distributions relative to Oleary & Frost recruits
+
+#Test for mean equivilence
+KruskalWallisTest(scoresOleary, scoresHuepel, scoresHuepel, scoresMalzahn)
+#Assumptions:
+#       - Samples were randomly taken
+#       - Samples are mutually independent 
+#       - Scale is ordinal and the variable is continuous 
+#       - Note: If the test is used as a test of dominance, it has no distributional assumptions. If it used to compare medians, 
+#           the distributions must be similar apart from their locations.
+#       - Note: The test is generally considered to be robust to ties. However, if ties are present they should not be concentrated 
+#           together in one part of the distribution (normal or uniform).
+#
+#       Conclusion: We reject the null hypothesis that the groups originate from the same distribution, and in turn conclude that one
+#           or more of the sub-strata have a different mean/median value.
 
 #Regression Models
 #Simple Linear Regression: lm(@formula(), data)
@@ -118,7 +180,7 @@ lm(@formula(Rating ~ RivalsRating+ESPNRating), recruits)
 lm(@formula(Stars ~ RivalsStars+ESPNStars), recruits)
 
 #Multinominal Logistic Regression
-recruitsCategorical = categorical(recruits)
+recruitsCategorical = transform!(recruits, :Staff => categorical, renamecols=false)
 fit(EconometricModel, @formula(Staff ~ Rating + Stars), recruitsCategorical, contrasts = Dict(:Staff => DummyCoding(base = "Oleary")))
 fit(EconometricModel, @formula(Staff ~ RivalsRating + RivalsStars), recruitsCategorical, contrasts = Dict(:Staff => DummyCoding(base = "Oleary")))
 
@@ -131,15 +193,6 @@ glm(@formula(ESPNRating ~ Staff), recruits, Normal())
 glm(@formula(Rating ~ State), recruits, Normal())
 glm(@formula(RivalsRating ~ State), recruits, Normal())
 glm(@formula(ESPNRating ~ State), recruits, Normal())
-
-#One-way Anova by Staff
-Stella.anova(recruits, :Rating, :Staff)
-
-#Kolmogorov–Smirnov Test of Normality
-#Single Sample
-ApproximateOneSampleKSTest(unique(recruits.Height), Normal())
-ApproximateOneSampleKSTest(unique(recruits.Weight), Normal())
-ApproximateOneSampleKSTest(unique(recruits.Rating), Normal())
 
 #K-Means Clustering w/Plot
 cluster_data = recruits[:,[4,5,11]]
@@ -180,4 +233,4 @@ DecisionTree.predict(model, learnedModel)
 predict_proba(model, learnedModel)
 println(get_classes(model))
 #NOTE: Applied a learned model based on prospective recruit infromation from 247Sports. The model
-#      predicted that the prospective recruit would have been a Hupel prospect.
+#      predicted that the prospective recruit would have been a Heupel prospect.
